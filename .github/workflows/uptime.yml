@@ -1,0 +1,75 @@
+# Paperly outage alarm, from outside Cloudflare (Paperly runs on Cloudflare; this runs on GitHub).
+# Every 5 minutes it checks the websites, the accounts server and the downloads. If something is down
+# it opens one issue assigned to the owner (GitHub emails them), and closes it when all is well again.
+# Run it by hand: Actions > Uptime check > Run workflow.
+name: Uptime check
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check Paperly
+        id: check
+        shell: bash
+        run: |
+          down=""
+          # probe NAME URL "ALLOWED CODES" [curl options]: 3 tries, 20 s each
+          probe() {
+            local name="$1" url="$2" ok="$3"; shift 3
+            local code
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 --retry 2 --retry-delay 10 --retry-all-errors "$@" "$url" || true)
+            [ -z "$code" ] && code=000
+            if [[ " $ok " == *" $code "* ]]; then echo "OK    $name ($code)"
+            else echo "DOWN  $name ($code)"; down="$down- **$name** answered $code: $url"$'\n'; fi
+          }
+          # The Sheets and admin sites are behind a password until launch, so 401 means they're up.
+          probe "Paperly Sheets website" "https://excel-app1.pages.dev/" "200 401"
+          probe "Paperly Docs website" "https://paperly-docs.pages.dev/version.json" "200"
+          probe "Download page" "https://paperly-download.pages.dev/" "200"
+          probe "Admin site" "https://paperly-admin.pages.dev/" "200 401"
+          probe "Accounts server (sign-in, plans, cloud)" "https://kumar-sheets-api.sheets-web.workers.dev/api/config" "200" -H "Origin: https://paperly-docs.pages.dev"
+          probe "Setup app list (GitHub download)" "https://github.com/${{ github.repository }}/releases/download/apps/manifest.json" "200" -L
+          {
+            echo 'down<<EOF_DOWN'
+            printf '%s' "$down"
+            echo 'EOF_DOWN'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or close the outage issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOWN: ${{ steps.check.outputs.down }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        shell: bash
+        run: |
+          title="Paperly is down"
+          open=$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          now=$(TZ=Asia/Kolkata date '+%d %b %Y, %H:%M IST')
+          if [ -n "$DOWN" ]; then
+            if [ -z "$open" ]; then
+              body=$(printf 'Found at %s by the uptime check (every 5 minutes, from GitHub, outside Cloudflare):\n\n%s\nPeople can keep working: files are on their own devices, and paid plans keep working for 7 days. What to do: D:\\Paperly Sheets report\\Microsoft_Outage_and_Paperly_13_Nov.pdf, and https://www.cloudflarestatus.com\n\nThis issue closes itself when everything answers again.' "$now" "$DOWN")
+              gh issue create --repo "$REPO" --title "$title" --body "$body" --assignee "$OWNER"
+            else
+              echo "Still down; issue #$open is already open."
+            fi
+          elif [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$REPO" --body "Everything answers again at $now."
+            gh issue close "$open" --repo "$REPO"
+          else
+            echo "All up."
+          fi
