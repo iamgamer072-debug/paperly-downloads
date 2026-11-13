@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+    inputs:
+      test_alarm:
+        description: 'Pretend one check fails, to test the alarm (the next normal run closes the issue)'
+        type: boolean
+        default: false
 
 permissions:
   issues: write
@@ -42,6 +47,7 @@ jobs:
           probe "Download page" "https://paperly-download.pages.dev/" "200"
           probe "Admin site" "https://paperly-admin.pages.dev/" "200 401"
           probe "Accounts server (sign-in, plans, cloud)" "https://kumar-sheets-api.sheets-web.workers.dev/api/config" "200" -H "Origin: https://paperly-docs.pages.dev"
+          if [ "${{ inputs.test_alarm }}" = "true" ]; then probe "TEST ALARM (not a real outage)" "https://paperly-docs.pages.dev/this-page-does-not-exist" "200"; fi
           probe "Setup app list (GitHub download)" "https://github.com/${{ github.repository }}/releases/download/apps/manifest.json" "200" -L
           {
             echo 'down<<EOF_DOWN'
@@ -58,12 +64,13 @@ jobs:
         shell: bash
         run: |
           title="Paperly is down"
+          [ "${{ inputs.test_alarm }}" = "true" ] && create_title="Paperly is down (test alarm, not real)" || create_title="$title"
           open=$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
           now=$(TZ=Asia/Kolkata date '+%d %b %Y, %H:%M IST')
           if [ -n "$DOWN" ]; then
             if [ -z "$open" ]; then
               body=$(printf 'Found at %s by the uptime check (every 5 minutes, from GitHub, outside Cloudflare):\n\n%s\nPeople can keep working: files are on their own devices, and paid plans keep working for 7 days. What to do: D:\\Paperly Sheets report\\Microsoft_Outage_and_Paperly_13_Nov.pdf, and https://www.cloudflarestatus.com\n\nThis issue closes itself when everything answers again.' "$now" "$DOWN")
-              gh issue create --repo "$REPO" --title "$title" --body "$body" --assignee "$OWNER"
+              gh issue create --repo "$REPO" --title "$create_title" --body "$body" --assignee "$OWNER"
             else
               echo "Still down; issue #$open is already open."
             fi
