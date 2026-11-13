@@ -47,7 +47,7 @@ jobs:
           probe "Download page" "https://paperly-download.pages.dev/" "200"
           probe "Admin site" "https://paperly-admin.pages.dev/" "200 401"
           probe "Accounts server (sign-in, plans, cloud)" "https://kumar-sheets-api.sheets-web.workers.dev/api/config" "200" -H "Origin: https://paperly-docs.pages.dev"
-          if [ "${{ inputs.test_alarm }}" = "true" ]; then probe "TEST ALARM (not a real outage)" "https://paperly-docs.pages.dev/this-page-does-not-exist" "200"; fi
+          if [ "${{ inputs.test_alarm }}" = "true" ]; then probe "TEST ALARM (not a real outage)" "https://paperly-docs.pages.dev/version.json" "599"; fi
           probe "Setup app list (GitHub download)" "https://github.com/${{ github.repository }}/releases/download/apps/manifest.json" "200" -L
           {
             echo 'down<<EOF_DOWN'
